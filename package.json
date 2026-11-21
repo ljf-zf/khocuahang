@@ -1,0 +1,14 @@
+{
+  "name": "kho-cua-hang-web-sapo",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Website quản lý tồn kho riêng, Cloudflare Workers + D1, nhận đơn qua browser extension",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply kho-cua-hang-db --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.50.0"
+  }
+}
