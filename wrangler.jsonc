@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "kho-cua-hang-web",
+  "name": "khocuahang",
   "main": "src/index.js",
   "compatibility_date": "2026-11-22",
   "vars": {
