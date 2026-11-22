@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "kho-cua-hang-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "c022697b-0b84-4447-8a10-ecdcbbd50fd6",
       "migrations_dir": "migrations"
     }
   ]
