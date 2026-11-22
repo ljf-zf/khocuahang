@@ -209,9 +209,18 @@ async function handleExtensionOrders(request, env) {
   const now = new Date().toISOString();
   const seenKeys = Array.isArray(body.seenOrderKeys) ? [...new Set(body.seenOrderKeys.map(x => String(x || '').trim().slice(0, 250)).filter(Boolean))].slice(0, 600) : [];
   if (seenKeys.length) {
-    const placeholders = seenKeys.map(() => '?').join(',');
-    await env.DB.prepare(`UPDATE sapo_extension_orders SET last_seen_at = ? WHERE order_key IN (${placeholders})`).bind(now, ...seenKeys).run();
+  // D1 giới hạn 100 tham số bind mỗi câu SQL.
+  for (let offset = 0; offset < seenKeys.length; offset += 90) {
+    const chunk = seenKeys.slice(offset, offset + 90);
+    const placeholders = chunk.map(() => '?').join(',');
+
+    await env.DB.prepare(
+      `UPDATE sapo_extension_orders
+       SET last_seen_at = ?
+       WHERE order_key IN (${placeholders})`
+    ).bind(now, ...chunk).run();
   }
+}
   const priorAgent = await env.DB.prepare('SELECT first_seen_at, last_changed_count FROM sapo_extension_agents WHERE agent_id = ?').bind(agentId).first();
   const reportedChanged = body.orders.length ? changed : Number(priorAgent?.last_changed_count || 0);
   await env.DB.prepare(`INSERT INTO sapo_extension_agents
