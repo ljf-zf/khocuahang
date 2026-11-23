@@ -208,9 +208,9 @@ async function handleExtensionOrders(request, env) {
         // Ghi snapshot và event trong cùng transaction để không mất lịch sử nếu request lỗi giữa chừng.
         await env.DB.batch([snapshotStatement, eventStatement]);
       }
-    } else {
-      await snapshotStatement.run();
     }
+    // Nếu fingerprint không đổi thì KHÔNG UPSERT snapshot: tránh ghi D1 cho cùng một đơn
+    // ở mỗi chu kỳ polling. last_seen_at được refresh riêng theo ngưỡng 6 giờ bên dưới.
   }
   const now = new Date().toISOString();
   const seenKeys = Array.isArray(body.seenOrderKeys) ? [...new Set(body.seenOrderKeys.map(x => String(x || '').trim().slice(0, 250)).filter(Boolean))].slice(0, 600) : [];
