@@ -195,13 +195,19 @@ async function handleExtensionOrders(request, env) {
         order.classification, order.cancellationExplicit ? 1 : 0, order.createdAt, order.updatedAt,
         previous?.first_seen_at || now, now, wasChanged ? now : (previous?.first_seen_at || now), fingerprint, order.phase, payloadJson);
     if (wasChanged) {
-      const eventId = await sha256Hex(order.orderKey + '|' + (previous?.fingerprint || 'none') + '>' + fingerprint);
-      const eventStatement = env.DB.prepare(`INSERT OR IGNORE INTO sapo_extension_events
-        (event_id, order_key, event_type, classification, observed_at, fingerprint, payload_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .bind(eventId, order.orderKey, eventType, order.classification, observedAt, fingerprint, payloadJson);
-      // Ghi snapshot và event trong cùng transaction để không mất lịch sử nếu request lỗi giữa chừng.
-      await env.DB.batch([snapshotStatement, eventStatement]);
+      // Dữ liệu baseline chỉ là mốc khởi tạo, không tạo event cho từng đơn cũ.
+      // Event chỉ được ghi cho đơn mới/biến động thực tế sau baseline.
+      if (eventType === 'baseline') {
+        await snapshotStatement.run();
+      } else {
+        const eventId = await sha256Hex(order.orderKey + '|' + (previous?.fingerprint || 'none') + '>' + fingerprint);
+        const eventStatement = env.DB.prepare(`INSERT OR IGNORE INTO sapo_extension_events
+          (event_id, order_key, event_type, classification, observed_at, fingerprint, payload_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .bind(eventId, order.orderKey, eventType, order.classification, observedAt, fingerprint, payloadJson);
+        // Ghi snapshot và event trong cùng transaction để không mất lịch sử nếu request lỗi giữa chừng.
+        await env.DB.batch([snapshotStatement, eventStatement]);
+      }
     } else {
       await snapshotStatement.run();
     }
