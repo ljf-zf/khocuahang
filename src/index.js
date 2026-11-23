@@ -209,18 +209,20 @@ async function handleExtensionOrders(request, env) {
   const now = new Date().toISOString();
   const seenKeys = Array.isArray(body.seenOrderKeys) ? [...new Set(body.seenOrderKeys.map(x => String(x || '').trim().slice(0, 250)).filter(Boolean))].slice(0, 600) : [];
   if (seenKeys.length) {
-  // D1 giới hạn 100 tham số bind mỗi câu SQL.
-  for (let offset = 0; offset < seenKeys.length; offset += 90) {
-    const chunk = seenKeys.slice(offset, offset + 90);
-    const placeholders = chunk.map(() => '?').join(',');
-
-    await env.DB.prepare(
-      `UPDATE sapo_extension_orders
-       SET last_seen_at = ?
-       WHERE order_key IN (${placeholders})`
-    ).bind(now, ...chunk).run();
+    // Giảm D1 row writes: chỉ refresh last_seen_at tối đa mỗi 6 giờ cho một đơn.
+    // Mỗi câu SQL dùng tối đa 92 bind params (now + 90 keys + cutoff).
+    const seenCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    for (let offset = 0; offset < seenKeys.length; offset += 90) {
+      const chunk = seenKeys.slice(offset, offset + 90);
+      const placeholders = chunk.map(() => '?').join(',');
+      await env.DB.prepare(
+        `UPDATE sapo_extension_orders
+         SET last_seen_at = ?
+         WHERE order_key IN (${placeholders})
+           AND last_seen_at < ?`
+      ).bind(now, ...chunk, seenCutoff).run();
+    }
   }
-}
   const priorAgent = await env.DB.prepare('SELECT first_seen_at, last_changed_count FROM sapo_extension_agents WHERE agent_id = ?').bind(agentId).first();
   const reportedChanged = body.orders.length ? changed : Number(priorAgent?.last_changed_count || 0);
   await env.DB.prepare(`INSERT INTO sapo_extension_agents
