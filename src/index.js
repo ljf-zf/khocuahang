@@ -209,8 +209,8 @@ async function handleExtensionOrders(request, env) {
         await env.DB.batch([snapshotStatement, eventStatement]);
       }
     }
-    // Nếu fingerprint không đổi thì KHÔNG UPSERT snapshot: tránh ghi D1 cho cùng một đơn
-    // ở mỗi chu kỳ polling. last_seen_at được refresh riêng theo ngưỡng 6 giờ bên dưới.
+    // Nếu fingerprint không đổi thì KHÔNG ghi D1 cho đơn này ở chu kỳ polling hiện tại.
+    // last_seen_at chỉ thay đổi khi snapshot của đơn thực sự có biến động.
   }
   const now = new Date().toISOString();
   // Heartbeat chỉ ghi trạng thái thiết bị; không UPDATE hàng trăm đơn chỉ vì chúng vừa được nhìn thấy.
