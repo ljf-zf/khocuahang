@@ -27,7 +27,7 @@
 <div class="app">
   <header class="topbar">
     <div class="brand"><div class="brand-mark">▦</div><div><div class="brand-title">Kho Cửa Hàng</div><div class="brand-sub">QUẢN LÝ TỒN KHO ĐƠN GIẢN</div></div></div>
-    <div class="top-right"><div class="global-search"><span>⌕</span><input id="globalSkuSearch" type="search" placeholder="Tìm SKU nhanh..." aria-label="Tìm SKU nhanh"></div><div class="status" id="cloudStatus"><span class="dot" id="cloudDot"></span><span id="cloudStatusText">Đang kiểm tra kết nối...</span><button class="btn small hidden" id="cloudLogout" type="button">Đăng xuất</button></div></div>
+    <div class="top-right"><div class="global-search"><span>⌕</span><input id="globalSkuSearch" type="search" placeholder="Tìm SKU nhanh..." aria-label="Tìm SKU nhanh"></div><div class="status" id="cloudStatus"><span class="dot" id="cloudDot"></span><span id="cloudStatusText">Đang kiểm tra kết nối...</span></div></div>
   </header>
   <div class="layout">
     <aside class="sidebar">
@@ -50,7 +50,7 @@
       <nav class="nav">
         <button data-view="settings"><span class="ico">⚙</span>Thiết lập</button>
       </nav>
-      <div class="side-note"><strong>Kho trực tuyến · Một kho</strong>Dữ liệu được lưu trên máy chủ riêng và dùng chung khi đăng nhập từ máy tính hoặc điện thoại.</div>
+      <div class="side-note"><strong>Kho trực tuyến · Một kho</strong>Website hiện không yêu cầu mật khẩu. Ai có đường link có thể xem và chỉnh sửa dữ liệu kho.</div>
     </aside>
     <main class="main">
       <section id="view-dashboard" class="view">
@@ -134,19 +134,6 @@
   </div>
   <nav class="mobile-nav"><button class="active" data-view="dashboard"><span>▦</span>Tổng quan</button><button data-view="inventory"><span>▤</span>Tồn kho</button><button data-view="restock"><span>↥</span>Nhập hàng</button><button data-view="history"><span>◷</span>Lịch sử</button><button data-view="sapo"><span>↔</span>Sapo</button><button data-view="settings"><span>⚙</span>Thiết lập</button></nav>
 </div>
-<div id="cloudLoginGate" class="cloud-login-gate">
-  <form id="cloudLoginForm" class="cloud-login-card">
-    <div class="cloud-login-mark">▦</div>
-    <div class="eyebrow">KHO CỬA HÀNG · WEBSITE RIÊNG</div>
-    <h1>Đăng nhập quản lý kho</h1>
-    <p>Dữ liệu kho được lưu trên máy chủ trung tâm. Đăng nhập để xem và cập nhật kho từ các thiết bị của mày.</p>
-    <label for="cloudPassword">Mật khẩu quản trị</label>
-    <input id="cloudPassword" type="password" autocomplete="current-password" required placeholder="Nhập mật khẩu website">
-    <button class="btn primary" id="cloudLoginButton" type="submit">Đăng nhập</button>
-    <div id="cloudLoginMessage" class="cloud-login-message" role="status"></div>
-    <div class="cloud-login-hint">Chỉ người có mật khẩu mới được truy cập dữ liệu kho.</div>
-  </form>
-</div>
 <div id="modalRoot"></div><div class="toast-area" id="toastArea"></div>
 <input type="file" id="excelFile" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden">
 <input type="file" id="backupFile" accept=".json,application/json" class="hidden">
@@ -207,23 +194,12 @@ async function syncCloudState(){
   }catch(e){cloudStatus('Mất kết nối · Đã lưu bản đệm','offline');toast('Chưa đồng bộ lên máy chủ: '+(e.message||'lỗi kết nối')+'. Dữ liệu tạm vẫn còn trên trình duyệt này.','error');}
   finally{cloudSaving=false;if(cloudSaveAgain){cloudSaveAgain=false;queueCloudSave();}}
 }
-function showCloudGate(message=''){
-  $('#cloudLoginGate').classList.remove('hidden');
-  $('#cloudLoginMessage').textContent=message;
-  $('#cloudLogout').classList.add('hidden');
-  cloudStatus('Chưa đăng nhập','offline');
-}
-function hideCloudGate(){
-  $('#cloudLoginGate').classList.add('hidden');
-  $('#cloudLogout').classList.remove('hidden');
-}
 function normalizeCloudState(x){
   if(!x||!Array.isArray(x.products)||!Array.isArray(x.history))return blankState();
   x.settings=x.settings||{lowStock:5};if(!Array.isArray(x.batches))x.batches=[];x.version=2;return x;
 }
 async function loadCloudState(){
   const res=await fetch('/api/state');
-  if(res.status===401)throw new Error('AUTH_REQUIRED');
   const data=await res.json();if(!res.ok)throw new Error(data.error||'Không tải được dữ liệu kho.');
   cloudRevision=Number(data.revision)||0;
   let shouldSeed=false;
@@ -234,27 +210,19 @@ async function loadCloudState(){
   }
   cloudAuthenticated=true;cloudConflict=false;
   updateDashboard();renderInventory();renderHistory();renderRecentBatches();
-  hideCloudGate();cloudStatus('Đã đồng bộ trực tuyến','online');
+  cloudStatus('Đã đồng bộ trực tuyến','online');
   loadSapoStatus();
   if(shouldSeed)queueCloudSave();
 }
 async function initCloud(){
-  try{await loadCloudState();}
-  catch(e){if(e.message==='AUTH_REQUIRED')showCloudGate();else{showCloudGate('Không kết nối được máy chủ: '+e.message);}}
-}
-async function submitCloudLogin(e){
-  e.preventDefault();const pass=$('#cloudPassword').value;const btn=$('#cloudLoginButton');
-  btn.disabled=true;btn.textContent='Đang đăng nhập...';$('#cloudLoginMessage').textContent='';
   try{
-    const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pass})});
-    const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Mật khẩu không đúng.');
-    $('#cloudPassword').value='';await loadCloudState();
-  }catch(err){$('#cloudLoginMessage').textContent=err.message==='AUTH_REQUIRED'?'Phiên đăng nhập chưa được xác nhận. Hãy thử lại.':err.message;}
-  finally{btn.disabled=false;btn.textContent='Đăng nhập';}
-}
-async function logoutCloud(){
-  try{await fetch('/api/logout',{method:'POST'});}catch{}
-  cloudAuthenticated=false;cloudConflict=false;showCloudGate('Đã đăng xuất khỏi website.');
+    await loadCloudState();
+  }catch(e){
+    cloudAuthenticated=false;
+    cloudStatus('Lỗi kết nối máy chủ','offline');
+    updateDashboard();renderInventory();renderHistory();renderRecentBatches();
+    toast('Không tải được dữ liệu kho trực tuyến: '+(e.message||'lỗi kết nối'),'error');
+  }
 }
 
 function toast(msg,type=''){const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;$('#toastArea').appendChild(el);setTimeout(()=>el.remove(),3600)}
@@ -386,8 +354,6 @@ $$('[data-inventory-filter]').forEach(el=>{const activate=()=>setInventoryFilter
 $('#lowThreshold').addEventListener('change',()=>{const n=Number($('#lowThreshold').value);if(!Number.isInteger(n)||n<0){toast('Ngưỡng phải là số nguyên không âm.','error');$('#lowThreshold').value=state.settings.lowStock;return}state.settings.lowStock=n;saveState();updateDashboard();renderInventory();toast('Đã cập nhật ngưỡng cảnh báo.','success')});
 $('#backupFile').addEventListener('change',e=>{const f=e.target.files[0];if(f)restoreJSON(f);e.target.value=''});
 $('#excelFile').addEventListener('change',e=>{const f=e.target.files[0];if(f)handleImportFile(f);e.target.value=''});
-$('#cloudLoginForm').addEventListener('submit',submitCloudLogin);
-$('#cloudLogout').addEventListener('click',logoutCloud);
 window.addEventListener('online',()=>{if(cloudAuthenticated&&!cloudConflict)queueCloudSave()});
 updateDashboard();
 initCloud();
