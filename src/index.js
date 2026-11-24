@@ -456,36 +456,16 @@ async function handleApi(request, env) {
   if (path === '/api/extension/sapo/ping' && request.method === 'GET') return handleExtensionPing(request, env);
   if (path === '/api/extension/sapo/orders' && request.method === 'POST') return handleExtensionOrders(request, env);
 
-  if (path === '/api/sapo/callback' && request.method === 'GET') return handleSapoCallback(request, env);
+  if (path === '/api/sapo/callback' && request.method === 'GET') {
+    return json({ error: 'Luồng Sapo OAuth cũ đã tắt. Hãy sử dụng extension Kho Sync.' }, 410);
+  }
 
   if (path === '/api/health' && request.method === 'GET') {
     return json({ ok: true, service: 'kho-cua-hang', database: Boolean(env.DB) });
   }
 
-  if (path === '/api/login' && request.method === 'POST') {
-    if (!env.APP_PASSWORD || !env.AUTH_SECRET) return json({ error: 'Máy chủ chưa cấu hình APP_PASSWORD hoặc AUTH_SECRET.' }, 503);
-    let body;
-    try { body = await readBody(request, 10_000); }
-    catch { return json({ error: 'Dữ liệu đăng nhập không hợp lệ.' }, 400); }
-    const supplied = String(body.password || '');
-    const expected = String(env.APP_PASSWORD);
-    // Compare all characters to avoid an early-exit timing difference.
-    let diff = supplied.length ^ expected.length;
-    const n = Math.max(supplied.length, expected.length);
-    for (let i = 0; i < n; i++) diff |= (supplied.charCodeAt(i) || 0) ^ (expected.charCodeAt(i) || 0);
-    if (diff !== 0) return json({ error: 'Mật khẩu không đúng.' }, 401);
-    const token = await createSession(env.AUTH_SECRET);
-    return json({ ok: true }, 200, { 'Set-Cookie': cookie(token, request, SESSION_SECONDS) });
-  }
-
-  if (path === '/api/logout' && request.method === 'POST') {
-    return json({ ok: true }, 200, { 'Set-Cookie': cookie('', request, 0) });
-  }
-
-  if (path.startsWith('/api/')) {
-    const valid = env.AUTH_SECRET && await verifySession(request, env.AUTH_SECRET);
-    if (!valid) return json({ error: 'Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.' }, 401);
-  }
+  // Website kho dùng chế độ không mật khẩu theo yêu cầu chủ cửa hàng.
+  // API nhận dữ liệu extension vẫn bắt buộc Bearer SYNC_API_KEY ở phía trên.
 
   if (path === '/api/extension/sapo/status' && request.method === 'GET') return json(await getExtensionSyncStatus(env));
   if (path === '/api/extension/sapo/orders' && request.method === 'GET') return json(await getExtensionOrders(url, env));
@@ -495,28 +475,8 @@ async function handleApi(request, env) {
     return json({ ok: true, events: (result.results || []).map(row => { let payload={}; try { payload=JSON.parse(row.payload_json||'{}'); } catch {} return { ...row, payload }; }) });
   }
 
-  if (path === '/api/sapo/connect' && request.method === 'GET') return startSapoOAuth(request, env);
-
-  if (path === '/api/sapo/status' && request.method === 'GET') {
-    const row = await getSapoConnection(env);
-    return json({
-      configured: Boolean(env.SAPO_API_KEY && env.SAPO_API_SECRET && env.SAPO_REDIRECT_URI && env.SAPO_SCOPES),
-      connected: Boolean(row?.access_token_encrypted),
-      alias: row?.alias || sapoAlias(env),
-      connectedAt: row?.connected_at || null,
-      lastTestAt: row?.last_test_at || null,
-      lastTestStatus: row?.last_test_status || null,
-      lastTestError: row?.last_test_error || null,
-      redirectUri: env.SAPO_REDIRECT_URI || `${url.origin}/api/sapo/callback`,
-      scopes: env.SAPO_SCOPES || null,
-    });
-  }
-
-  if (path === '/api/sapo/test' && request.method === 'POST') return handleSapoTest(env);
-
-  if (path === '/api/sapo/disconnect' && request.method === 'POST') {
-    await env.DB.prepare('DELETE FROM sapo_connection WHERE id=1').run();
-    return json({ ok: true });
+  if (['/api/sapo/connect', '/api/sapo/status', '/api/sapo/test', '/api/sapo/disconnect'].includes(path)) {
+    return json({ error: 'Luồng Sapo OAuth cũ đã tắt. Dữ liệu Sapo được nhận qua extension Kho Sync.' }, 410);
   }
 
   if (path === '/api/state' && request.method === 'GET') {
