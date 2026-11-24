@@ -278,7 +278,8 @@ async function loadSapoStatus(){
     $('#sapoExtensionWebUrl').value=location.origin;
     const badge=$('#sapoSyncBadge');
     if(agent){
-      const isRecent=agent.last_seen_at&&Date.now()-new Date(agent.last_seen_at).getTime()<3*60*1000;
+      // Backend ghi heartbeat tối đa mỗi 10 phút để tiết kiệm D1 Free; cho phép 12 phút trước khi đánh dấu stale.
+      const isRecent=agent.last_seen_at&&Date.now()-new Date(agent.last_seen_at).getTime()<12*60*1000;
       badge.textContent=isRecent?'Đang nhận dữ liệu':'Đã từng kết nối';badge.className='pill '+(isRecent?'ok':'low');
       $('#sapoAgentDevice').textContent=agent.device_label||'Browser extension';
       $('#sapoAgentLastSeen').textContent=dateFmt(agent.last_seen_at);
