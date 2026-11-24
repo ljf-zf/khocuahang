@@ -213,33 +213,28 @@ async function handleExtensionOrders(request, env) {
     // ở mỗi chu kỳ polling. last_seen_at được refresh riêng theo ngưỡng 6 giờ bên dưới.
   }
   const now = new Date().toISOString();
-  const seenKeys = Array.isArray(body.seenOrderKeys) ? [...new Set(body.seenOrderKeys.map(x => String(x || '').trim().slice(0, 250)).filter(Boolean))].slice(0, 600) : [];
-  if (seenKeys.length) {
-    // Giảm D1 row writes: chỉ refresh last_seen_at tối đa mỗi 6 giờ cho một đơn.
-    // Mỗi câu SQL dùng tối đa 92 bind params (now + 90 keys + cutoff).
-    const seenCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-    for (let offset = 0; offset < seenKeys.length; offset += 90) {
-      const chunk = seenKeys.slice(offset, offset + 90);
-      const placeholders = chunk.map(() => '?').join(',');
-      await env.DB.prepare(
-        `UPDATE sapo_extension_orders
-         SET last_seen_at = ?
-         WHERE order_key IN (${placeholders})
-           AND last_seen_at < ?`
-      ).bind(now, ...chunk, seenCutoff).run();
-    }
-  }
-  const priorAgent = await env.DB.prepare('SELECT first_seen_at, last_changed_count FROM sapo_extension_agents WHERE agent_id = ?').bind(agentId).first();
+  // Heartbeat chỉ ghi trạng thái thiết bị; không UPDATE hàng trăm đơn chỉ vì chúng vừa được nhìn thấy.
+  // Việc không xuất hiện trong danh sách không được dùng để suy luận đơn hủy.
+  const priorAgent = await env.DB.prepare('SELECT first_seen_at, last_changed_count, last_poll_at, baseline_complete FROM sapo_extension_agents WHERE agent_id = ?').bind(agentId).first();
   const reportedChanged = body.orders.length ? changed : Number(priorAgent?.last_changed_count || 0);
-  await env.DB.prepare(`INSERT INTO sapo_extension_agents
-    (agent_id, device_label, first_seen_at, last_seen_at, last_poll_at, last_error, last_received_count, last_changed_count, baseline_complete)
-    VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    ON CONFLICT(agent_id) DO UPDATE SET device_label=excluded.device_label, last_seen_at=excluded.last_seen_at,
-      last_poll_at=excluded.last_poll_at, last_error=NULL, last_received_count=excluded.last_received_count,
-      last_changed_count=excluded.last_changed_count,
-      baseline_complete=MAX(sapo_extension_agents.baseline_complete, excluded.baseline_complete)`)
-    .bind(agentId, String(body.deviceLabel || 'Browser extension').slice(0, 120), priorAgent?.first_seen_at || now, now, now,
-      Math.max(0, Number(body.observedCount ?? body.orders.length) || 0), reportedChanged, body.baselineComplete ? 1 : 0).run();
+  // Ghi heartbeat tối đa một lần mỗi 10 phút; tránh một D1 write mỗi 30 giây
+  // và nhiều lần ghi khi extension gửi hàng đợi thành các batch.
+  const lastAgentPoll = Date.parse(priorAgent?.last_poll_at || '');
+  const shouldWriteAgent = !priorAgent ||
+    !Number.isFinite(lastAgentPoll) ||
+    Date.now() - lastAgentPoll >= 10 * 60 * 1000 ||
+    (body.baselineComplete && !priorAgent.baseline_complete);
+  if (shouldWriteAgent) {
+    await env.DB.prepare(`INSERT INTO sapo_extension_agents
+      (agent_id, device_label, first_seen_at, last_seen_at, last_poll_at, last_error, last_received_count, last_changed_count, baseline_complete)
+      VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
+      ON CONFLICT(agent_id) DO UPDATE SET device_label=excluded.device_label, last_seen_at=excluded.last_seen_at,
+        last_poll_at=excluded.last_poll_at, last_error=NULL, last_received_count=excluded.last_received_count,
+        last_changed_count=excluded.last_changed_count,
+        baseline_complete=MAX(sapo_extension_agents.baseline_complete, excluded.baseline_complete)`)
+      .bind(agentId, String(body.deviceLabel || 'Browser extension').slice(0, 120), priorAgent?.first_seen_at || now, now, now,
+        Math.max(0, Number(body.observedCount ?? body.orders.length) || 0), reportedChanged, body.baselineComplete ? 1 : 0).run();
+  }
   return json({ ok: true, received: body.orders.length, changed, created, cancelled, unknown, skipped, acceptedAt: now }, 200, extensionCorsHeaders());
 }
 async function getExtensionSyncStatus(env) {
