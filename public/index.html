@@ -89,7 +89,7 @@
       </section>
       <section id="view-sapo" class="view hidden">
         <div class="page-head"><div><div class="eyebrow">ĐỒNG BỘ ĐƠN HÀNG</div><h1>Sapo Marketplace</h1><p>Extension đọc dữ liệu từ phiên Sapo đang đăng nhập và gửi đơn về website kho.</p></div><div class="actions"><button class="btn" id="refreshSapoStatus">↻ Làm mới dữ liệu</button></div></div>
-        <div class="notice"><strong>Chế độ quan sát an toàn:</strong> Extension đang gửi bản ghi đơn hàng và trạng thái. Website chưa tự động trừ/hoàn tồn. Đơn chỉ được xác nhận hủy khi dữ liệu Sapo có trường hoặc trạng thái hủy rõ ràng; đơn tạm thời không xuất hiện trong danh sách không bị coi là đã hủy.</div>
+        <div class="notice"><strong>Chế độ quan sát an toàn:</strong> Đơn mới được đồng bộ đến mốc trùng gần nhất rồi dừng. Chỉ các đơn còn hoạt động từ ngày bắt đầu mới được rà trạng thái; đơn đã giao/hủy kết thúc theo dõi. Lịch sử cũ được giữ nguyên. Hiện chưa tự động trừ/hoàn tồn kho.</div>
         <div class="grid-kpi">
           <div class="kpi"><div class="kpi-top">Tổng đơn đã nhận <span class="kpi-icon">▤</span></div><div class="kpi-value" id="sapoTotalOrders">0</div><div class="kpi-foot">Các mã đơn duy nhất đã ghi nhận</div></div>
           <div class="kpi"><div class="kpi-top">Đơn hủy xác định rõ <span class="kpi-icon">×</span></div><div class="kpi-value" id="sapoCancelledOrders">0</div><div class="kpi-foot">Có trường/trạng thái hủy từ API</div></div>
@@ -118,7 +118,7 @@
           </div>
         </div>
         <div class="panel section-panel">
-          <div class="toolbar"><div><div class="panel-title">Đơn hàng nhận từ Sapo</div><div class="panel-sub" id="sapoOrdersSummary">Chưa nhận dữ liệu</div></div><div class="toolbar-actions"><select id="sapoOrdersFilter" class="btn"><option value="all">Tất cả trạng thái</option><option value="pending">Chưa xử lý</option><option value="processed">Đã xử lý</option><option value="cancelled">Đã hủy rõ ràng</option><option value="unknown">Chưa phân loại</option></select></div></div>
+          <div class="toolbar"><div><div class="panel-title">Đơn hàng nhận từ Sapo</div><div class="panel-sub" id="sapoOrdersSummary">Chưa nhận dữ liệu</div></div><div class="toolbar-actions"><select id="sapoOrdersFilter" class="btn"><option value="all">Tất cả trạng thái</option><option value="pending">Chưa xử lý</option><option value="processed">Đã xử lý</option><option value="in_transit">Đang vận chuyển</option><option value="delivered">Đã giao</option><option value="cancelled">Đã hủy rõ ràng</option><option value="unpaid">Chưa thanh toán</option><option value="unknown">Chưa phân loại</option></select></div></div>
           <div id="sapoOrdersResults"><div class="empty compact-empty"><strong>Chưa có đơn hàng đồng bộ</strong><p>Cài extension và bật theo dõi để bắt đầu nhận đơn.</p></div></div>
         </div>
         <div class="panel section-panel">
@@ -274,7 +274,7 @@ async function loadSapoStatus(){
     $('#sapoTotalOrders').textContent=fmt(totals.total||0);
     $('#sapoCancelledOrders').textContent=fmt(totals.cancelled||0);
     $('#sapoUnknownOrders').textContent=fmt(totals.unknown||0);
-    $('#sapoActiveOrders').textContent=fmt((totals.pending||0)+(totals.processed||0));
+    $('#sapoActiveOrders').textContent=fmt((totals.pending||0)+(totals.processed||0)+(totals.in_transit||0));
     $('#sapoExtensionWebUrl').value=location.origin;
     const badge=$('#sapoSyncBadge');
     if(agent){
@@ -286,7 +286,7 @@ async function loadSapoStatus(){
       $('#sapoAgentLastCount').textContent=fmt(agent.last_received_count||0);
       $('#sapoAgentChanged').textContent=fmt(agent.last_changed_count||0);
       $('#sapoBaselineState').textContent=agent.baseline_complete?'Đã hoàn tất':'Đang đối soát / chưa xác nhận';
-      $('#sapoAgentHint').textContent=isRecent?'Extension vừa gửi dữ liệu thành công. Giữ trình duyệt và phiên Sapo hoạt động để tiếp tục theo dõi.':'Chưa nhận gói đồng bộ mới trong 3 phút. Kiểm tra Edge, trạng thái extension và phiên đăng nhập Sapo.';
+      $('#sapoAgentHint').textContent=isRecent?'Extension vừa gửi dữ liệu thành công. Giữ trình duyệt và phiên Sapo hoạt động để tiếp tục theo dõi.':'Chưa nhận gói đồng bộ mới trong 12 phút. Kiểm tra Edge, trạng thái extension và phiên đăng nhập Sapo.';
     }else{
       badge.textContent='Chưa nhận dữ liệu';badge.className='pill low';
       $('#sapoAgentDevice').textContent='—';$('#sapoAgentLastSeen').textContent='—';$('#sapoAgentLastCount').textContent='0';$('#sapoAgentChanged').textContent='0';$('#sapoBaselineState').textContent='Chưa chạy';
@@ -308,11 +308,12 @@ async function loadSapoOrders(){
     if(!data.orders?.length){root.innerHTML='<div class="empty compact-empty"><strong>Chưa có đơn trong bộ lọc này</strong><p>Khi extension gửi dữ liệu, đơn hàng sẽ xuất hiện tại đây.</p></div>';return}
     const rows=data.orders.map(row=>{
       const o=row.payload||{};const className=row.classification||o.classification||'unknown';
-      const badge=className==='cancelled'?'<span class="pill zero">Đã hủy rõ ràng</span>':className==='pending'?'<span class="pill low">Chưa xử lý</span>':className==='processed'?'<span class="pill ok">Đã xử lý</span>':'<span class="pill low">Chưa phân loại</span>';
+      const badge=className==='cancelled'?'<span class="pill zero">Đã hủy rõ ràng</span>':className==='delivered'?'<span class="pill ok">Đã giao · Kết thúc</span>':className==='in_transit'?'<span class="pill low">Đang vận chuyển</span>':className==='unpaid'?'<span class="pill low">Chưa thanh toán</span>':className==='pending'?'<span class="pill low">Chưa xử lý</span>':className==='processed'?'<span class="pill ok">Đã xử lý</span>':'<span class="pill low">Chưa phân loại</span>';
       const items=(o.items||[]).map(i=>{const known=state.products.some(p=>String(p.sku||'').trim().toUpperCase()===String(i.sku||'').trim().toUpperCase());return `<span class="chip ${known?'good':'bad'}">${esc(i.sku||'(không SKU)')} × ${fmt(i.quantity)}${known?'':' · Chưa có trong kho'}</span>`}).join(' ');
       const statusRaw=[o.channelOrderStatus,o.sapoOrderStatus,o.status].filter(Boolean).join(' / ')||'Không có trường trạng thái';
       const statusFields=(o.statusFields||[]).map(x=>`${x.key}: ${typeof x.value==='object'?JSON.stringify(x.value):x.value}`).join(' · ');
-      return `<tr><td><strong>${esc(row.order_number||o.orderNumber||row.order_id)}</strong><div class="product-name">ID: ${esc(row.order_id||o.id||'—')} · Kết nối: ${esc(row.connection_id||o.connectionId||'—')}</div></td><td>${badge}<div class="product-name">${esc(statusRaw)}</div><div class="product-name">${esc(statusFields)}</div></td><td style="white-space:normal;min-width:280px">${items||'<span class="product-name">Không tìm thấy dòng SKU</span>'}</td><td>${dateFmt(row.last_seen_at)}</td><td>${esc(o.lastEventType||'—')}</td></tr>`;
+      const historyLabel=o.historyOnly?'<span class="pill low">Chỉ lịch sử · Không tính tồn</span>':'';
+      return `<tr><td><strong>${esc(row.order_number||o.orderNumber||row.order_id)}</strong><div class="product-name">ID: ${esc(row.order_id||o.id||'—')} · Kết nối: ${esc(row.connection_id||o.connectionId||'—')}</div></td><td>${badge}${historyLabel}<div class="product-name">${esc(statusRaw)}</div><div class="product-name">${esc(statusFields)}</div></td><td style="white-space:normal;min-width:280px">${items||'<span class="product-name">Không tìm thấy dòng SKU</span>'}</td><td>${dateFmt(row.last_seen_at)}</td><td>${esc(o.lastEventType||'—')}</td></tr>`;
     }).join('');
     root.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Phân loại / Trạng thái gốc</th><th>SKU / Số lượng</th><th>Lần thấy cuối</th><th>Sự kiện gần nhất</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }catch(e){root.innerHTML=`<div class="notice" style="margin:14px"><strong>Lỗi:</strong> ${esc(e.message)}</div>`}
@@ -325,7 +326,7 @@ async function loadSapoEvents(){
     const events=data.events||[];
     $('#sapoEventsSummary').textContent=`${fmt(events.length)} sự kiện gần nhất`;
     if(!events.length){root.innerHTML='<div class="empty compact-empty"><strong>Chưa có lịch sử biến động</strong><p>Đơn mới hoặc thay đổi sẽ được ghi nhận tại đây.</p></div>';return}
-    const names={baseline:'Mốc ban đầu',new:'Đơn mới',updated:'Đơn cập nhật',cancelled:'Đơn hủy',reopened:'Đơn mở lại'};
+    const names={baseline:'Mốc ban đầu',new:'Đơn mới',updated:'Đơn cập nhật',cancelled:'Đơn hủy',delivered:'Đã giao',reopened:'Đơn mở lại'};
     root.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Mã đơn</th><th>Sự kiện</th><th>Trạng thái</th><th>SKU / Số lượng</th></tr></thead><tbody>${events.map(ev=>{const o=ev.payload||{};const itemText=(o.items||[]).map(i=>`${esc(i.sku||'(không SKU)')} × ${fmt(i.quantity)}`).join(' · ');return `<tr><td>${dateFmt(ev.observed_at)}</td><td><strong>${esc(o.orderNumber||o.id||ev.order_key)}</strong></td><td>${esc(names[ev.event_type]||ev.event_type)}</td><td>${esc(ev.classification||'unknown')}<div class="product-name">${esc(o.channelOrderStatus||'')} ${esc(o.sapoOrderStatus||'')}</div></td><td style="white-space:normal;min-width:220px">${itemText||'Không có SKU'}</td></tr>`}).join('')}</tbody></table></div>`;
   }catch(e){root.innerHTML=`<div class="notice" style="margin:14px"><strong>Lỗi:</strong> ${esc(e.message)}</div>`}
 }
