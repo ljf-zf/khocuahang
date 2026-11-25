@@ -308,6 +308,18 @@ async function handleExtensionKnownOrders(request, env) {
   return json({ ok: true, known: result.results || [] }, 200, extensionCorsHeaders());
 }
 
+async function handleExtensionCursor(request, env) {
+  if (!env.DB) return json({ error: 'Máy chủ chưa gắn D1 database.' }, 503, extensionCorsHeaders());
+  if (!env.SYNC_API_KEY) return json({ error: 'Máy chủ chưa cấu hình SYNC_API_KEY.' }, 503, extensionCorsHeaders());
+  if (!hasValidSyncKey(request, env)) return json({ error: 'SYNC_API_KEY không đúng.' }, 401, extensionCorsHeaders());
+  const row = await env.DB.prepare(`SELECT order_key, created_at
+    FROM sapo_extension_orders
+    WHERE COALESCE(created_at, '') <> ''
+    ORDER BY created_at DESC, first_seen_at DESC
+    LIMIT 1`).first();
+  return json({ ok: true, anchorKey: row?.order_key || null, createdAt: row?.created_at || null }, 200, extensionCorsHeaders());
+}
+
 async function handleExtensionHistoryDelete(request, env) {
   if (!env.DB) return json({ error: 'Máy chủ chưa gắn D1 database.' }, 503, extensionCorsHeaders());
   if (!env.SYNC_API_KEY) return json({ error: 'Máy chủ chưa cấu hình SYNC_API_KEY.' }, 503, extensionCorsHeaders());
@@ -523,6 +535,7 @@ async function handleApi(request, env) {
   }
   if (path === '/api/extension/sapo/ping' && request.method === 'GET') return handleExtensionPing(request, env);
   if (path === '/api/extension/sapo/known' && request.method === 'POST') return handleExtensionKnownOrders(request, env);
+  if (path === '/api/extension/sapo/cursor' && request.method === 'GET') return handleExtensionCursor(request, env);
   if (path === '/api/extension/sapo/history/delete' && request.method === 'POST') return handleExtensionHistoryDelete(request, env);
   if (path === '/api/extension/sapo/orders' && request.method === 'POST') return handleExtensionOrders(request, env);
 
