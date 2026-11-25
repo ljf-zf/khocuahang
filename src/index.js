@@ -103,11 +103,13 @@ function classifyExtensionOrder(order) {
   const combined = [channel, sapo, status].join(' ');
   if (/(cancel|canceled|cancelled|void|đã hủy|da huy|hủy đơn|huy don)/i.test(combined)) return 'cancelled';
 
-  // Các trạng thái Sapo Marketplace đã đối chiếu từ dữ liệu thực tế.
-  if (['COMPLETED', 'TO_CONFIRM_RECEIVE', 'DELIVERED', 'RECEIVED'].includes(channel) ||
-      /^(delivered|completed|received|đã giao|da giao)$/.test(sapo) ||
-      /^(delivered|completed|received|đã giao|da giao)$/.test(status)) return 'delivered';
-  if (['SHIPPED', 'IN_TRANSIT', 'DELIVERING', 'SHIPPING'].includes(channel) ||
+  // Chỉ coi TO_CONFIRM_RECEIVE là đã giao khi trạng thái Sapo cũng xác nhận delivered.
+  const sapoDelivered = /^(delivered|completed|received|đã giao|da giao)$/.test(sapo) ||
+    /^(delivered|completed|received|đã giao|da giao)$/.test(status);
+  if (['COMPLETED', 'DELIVERED', 'RECEIVED'].includes(channel) ||
+      (channel === 'TO_CONFIRM_RECEIVE' && sapoDelivered) ||
+      (sapoDelivered && !['pending', 'ready_to_ship'].includes(sapo))) return 'delivered';
+  if (['SHIPPED', 'IN_TRANSIT', 'DELIVERING', 'SHIPPING', 'TO_CONFIRM_RECEIVE'].includes(channel) ||
       /^(shipped|in_transit|delivering|shipping|đang giao|dang giao)$/.test(sapo)) return 'in_transit';
   if (channel === 'PROCESSED') return 'processed';
   if (['READY_TO_SHIP', 'RETRY_SHIP'].includes(channel) && sapo === 'pending') return 'pending';
@@ -184,6 +186,7 @@ async function handleExtensionOrders(request, env) {
       if (!previous) eventType = order.phase === 'baseline' ? 'baseline' : 'new';
       else if (previous.classification !== 'cancelled' && order.classification === 'cancelled') eventType = 'cancelled';
       else if (previous.classification === 'cancelled' && ['pending', 'processed'].includes(order.classification)) eventType = 'reopened';
+      else if (previous.classification !== 'delivered' && order.classification === 'delivered') eventType = 'delivered';
       else eventType = 'updated';
       changed++;
       if (!previous) created++;
