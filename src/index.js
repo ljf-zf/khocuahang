@@ -85,7 +85,7 @@ async function sha256Hex(value) {
 }
 function classifyExtensionOrder(order) {
   const fields = Array.isArray(order.statusFields) ? order.statusFields : [];
-  // Phân biệt cờ đã hủy với cờ can_cancel/cancelable (có thể hủy).
+  // Chỉ nhận diện hủy rõ ràng; can_cancel/cancelable không phải trạng thái đã hủy.
   const cancellationFlag = /(^|[._])(is_cancelled|is_canceled|cancelled|canceled|cancelled_flag|canceled_flag|cancel_flag|cancellation_flag|cancel_status|cancellation_status|is_voided|voided|is_void|is_huy|da_huy)([._]|$)/i;
   const cancellationDate = /(cancelled_at|canceled_at|cancelled_on|canceled_on|cancel_time|canceled_time|cancelled_time|cancellation_date|voided_at)/i;
   for (const field of fields) {
@@ -96,10 +96,22 @@ function classifyExtensionOrder(order) {
     if (/(status|reason|action)/i.test(String(field.key || '')) && typeof field.value === 'string' && /(cancel|canceled|cancelled|void|đã hủy|da huy|hủy đơn|huy don)/i.test(field.value)) return 'cancelled';
   }
   if (order.cancellationExplicit === true) return 'cancelled';
-  const rawStatuses = [order.channelOrderStatus, order.sapoOrderStatus, order.status].map(x => String(x || '')).join(' ');
-  if (/(cancel|canceled|cancelled|void|đã hủy|da huy|hủy đơn|huy don)/i.test(rawStatuses)) return 'cancelled';
-  if (String(order.channelOrderStatus || '').toUpperCase() === 'PROCESSED') return 'processed';
-  if (['READY_TO_SHIP', 'RETRY_SHIP'].includes(String(order.channelOrderStatus || '').toUpperCase()) && String(order.sapoOrderStatus || '').toLowerCase() === 'pending') return 'pending';
+
+  const channel = String(order.channelOrderStatus || '').trim().toUpperCase();
+  const sapo = String(order.sapoOrderStatus || '').trim().toLowerCase();
+  const status = String(order.status || '').trim().toLowerCase();
+  const combined = [channel, sapo, status].join(' ');
+  if (/(cancel|canceled|cancelled|void|đã hủy|da huy|hủy đơn|huy don)/i.test(combined)) return 'cancelled';
+
+  // Các trạng thái Sapo Marketplace đã đối chiếu từ dữ liệu thực tế.
+  if (['COMPLETED', 'TO_CONFIRM_RECEIVE', 'DELIVERED', 'RECEIVED'].includes(channel) ||
+      /^(delivered|completed|received|đã giao|da giao)$/.test(sapo) ||
+      /^(delivered|completed|received|đã giao|da giao)$/.test(status)) return 'delivered';
+  if (['SHIPPED', 'IN_TRANSIT', 'DELIVERING', 'SHIPPING'].includes(channel) ||
+      /^(shipped|in_transit|delivering|shipping|đang giao|dang giao)$/.test(sapo)) return 'in_transit';
+  if (channel === 'PROCESSED') return 'processed';
+  if (['READY_TO_SHIP', 'RETRY_SHIP'].includes(channel) && sapo === 'pending') return 'pending';
+  if (channel === 'UNPAID' || sapo === 'unpaid' || status === 'unpaid') return 'unpaid';
   return 'unknown';
 }
 function sanitizeExtensionOrder(input) {
@@ -125,6 +137,9 @@ function sanitizeExtensionOrder(input) {
     createdAt: String(input.createdAt || '').slice(0, 80),
     updatedAt: String(input.updatedAt || '').slice(0, 80),
     cancelledAt: String(input.cancelledAt || '').slice(0, 80),
+    // Đơn trước ngày bắt đầu chỉ là lịch sử; hiện tại toàn bộ luồng vẫn ở chế độ quan sát.
+    historyOnly: input.historyOnly === true,
+    inventoryEligible: input.inventoryEligible === true && input.historyOnly !== true,
     items,
     phase: input.phase === 'baseline' ? 'baseline' : 'live',
     observedAt: String(input.observedAt || new Date().toISOString()).slice(0, 80),
@@ -159,6 +174,7 @@ async function handleExtensionOrders(request, env) {
       status: order.status, statusFields: order.statusFields, classification: order.classification,
       cancellationExplicit: order.cancellationExplicit, createdAt: order.createdAt,
       updatedAt: order.updatedAt, cancelledAt: order.cancelledAt, items: order.items,
+      historyOnly: order.historyOnly, inventoryEligible: order.inventoryEligible,
     });
     const fingerprint = await sha256Hex(fingerprintSource);
     const now = new Date().toISOString();
@@ -241,6 +257,9 @@ async function getExtensionSyncStatus(env) {
   const agent = await env.DB.prepare('SELECT * FROM sapo_extension_agents ORDER BY last_seen_at DESC LIMIT 1').first();
   const totals = await env.DB.prepare(`SELECT COUNT(*) AS total,
     SUM(CASE WHEN classification='cancelled' THEN 1 ELSE 0 END) AS cancelled,
+    SUM(CASE WHEN classification='delivered' THEN 1 ELSE 0 END) AS delivered,
+    SUM(CASE WHEN classification='in_transit' THEN 1 ELSE 0 END) AS in_transit,
+    SUM(CASE WHEN classification='unpaid' THEN 1 ELSE 0 END) AS unpaid,
     SUM(CASE WHEN classification='unknown' THEN 1 ELSE 0 END) AS unknown,
     SUM(CASE WHEN classification='pending' THEN 1 ELSE 0 END) AS pending,
     SUM(CASE WHEN classification='processed' THEN 1 ELSE 0 END) AS processed,
@@ -249,7 +268,7 @@ async function getExtensionSyncStatus(env) {
   return { ok: true, agent: agent || null, totals: totals || {}, events: events?.results || [] };
 }
 async function getExtensionOrders(url, env) {
-  const allowed = new Set(['all', 'cancelled', 'unknown', 'pending', 'processed']);
+  const allowed = new Set(['all', 'cancelled', 'delivered', 'in_transit', 'unpaid', 'unknown', 'pending', 'processed']);
   const filter = allowed.has(url.searchParams.get('status')) ? url.searchParams.get('status') : 'all';
   const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 100));
   const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
@@ -269,6 +288,55 @@ async function getExtensionOrders(url, env) {
     let payload = {}; try { payload = JSON.parse(row.payload_json || '{}'); } catch {}
     return { ...row, payload };
   }) };
+}
+
+async function handleExtensionKnownOrders(request, env) {
+  if (!env.DB) return json({ error: 'Máy chủ chưa gắn D1 database.' }, 503, extensionCorsHeaders());
+  if (!env.SYNC_API_KEY) return json({ error: 'Máy chủ chưa cấu hình SYNC_API_KEY.' }, 503, extensionCorsHeaders());
+  if (!hasValidSyncKey(request, env)) return json({ error: 'SYNC_API_KEY không đúng.' }, 401, extensionCorsHeaders());
+  let body;
+  try { body = await readBody(request, 30_000); }
+  catch { return json({ error: 'Danh sách mã đơn không hợp lệ.' }, 400, extensionCorsHeaders()); }
+  const keys = [...new Set((Array.isArray(body.orderKeys) ? body.orderKeys : [])
+    .map(x => String(x || '').trim().slice(0, 250)).filter(Boolean))].slice(0, 90);
+  if (!keys.length) return json({ ok: true, known: [] }, 200, extensionCorsHeaders());
+  const placeholders = keys.map(() => '?').join(',');
+  const result = await env.DB.prepare(
+    `SELECT order_key, fingerprint, classification, created_at
+     FROM sapo_extension_orders WHERE order_key IN (${placeholders})`
+  ).bind(...keys).all();
+  return json({ ok: true, known: result.results || [] }, 200, extensionCorsHeaders());
+}
+
+async function handleExtensionHistoryDelete(request, env) {
+  if (!env.DB) return json({ error: 'Máy chủ chưa gắn D1 database.' }, 503, extensionCorsHeaders());
+  if (!env.SYNC_API_KEY) return json({ error: 'Máy chủ chưa cấu hình SYNC_API_KEY.' }, 503, extensionCorsHeaders());
+  if (!hasValidSyncKey(request, env)) return json({ error: 'SYNC_API_KEY không đúng.' }, 401, extensionCorsHeaders());
+  let body;
+  try { body = await readBody(request, 10_000); }
+  catch { return json({ error: 'Yêu cầu xóa lịch sử không hợp lệ.' }, 400, extensionCorsHeaders()); }
+  if (body.confirmation !== 'DELETE_SAPO_HISTORY') {
+    return json({ error: 'Thiếu xác nhận xóa lịch sử Sapo.' }, 400, extensionCorsHeaders());
+  }
+  const before = await env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM sapo_extension_orders) AS orders,
+    (SELECT COUNT(*) FROM sapo_extension_events) AS events,
+    (SELECT COUNT(*) FROM sapo_extension_agents) AS agents`).first();
+  // Chỉ xóa lịch sử đồng bộ Sapo; tuyệt đối không đụng app_state / SKU / tồn kho / lịch sử nhập hàng.
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM sapo_extension_events'),
+    env.DB.prepare('DELETE FROM sapo_extension_orders'),
+    env.DB.prepare('DELETE FROM sapo_extension_agents'),
+  ]);
+  return json({
+    ok: true,
+    deleted: {
+      orders: Number(before?.orders || 0),
+      events: Number(before?.events || 0),
+      agents: Number(before?.agents || 0),
+    },
+    inventoryTouched: false,
+  }, 200, extensionCorsHeaders());
 }
 
 
@@ -454,6 +522,8 @@ async function handleApi(request, env) {
     return new Response(null, { status: 204, headers: extensionCorsHeaders() });
   }
   if (path === '/api/extension/sapo/ping' && request.method === 'GET') return handleExtensionPing(request, env);
+  if (path === '/api/extension/sapo/known' && request.method === 'POST') return handleExtensionKnownOrders(request, env);
+  if (path === '/api/extension/sapo/history/delete' && request.method === 'POST') return handleExtensionHistoryDelete(request, env);
   if (path === '/api/extension/sapo/orders' && request.method === 'POST') return handleExtensionOrders(request, env);
 
   if (path === '/api/sapo/callback' && request.method === 'GET') {
